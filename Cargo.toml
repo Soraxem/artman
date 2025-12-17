@@ -1,0 +1,7 @@
+[package]
+name = "artman"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+artnet_protocol = "0.4.4"

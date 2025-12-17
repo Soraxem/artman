@@ -1,0 +1,9 @@
+services:
+  artman:
+    build:
+      context: .
+      dockerfile: development.dockerfile
+    volumes:
+      - ./:/app
+    ports:
+      - "6454:6454/udp"
