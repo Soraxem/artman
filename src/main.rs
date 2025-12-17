@@ -57,11 +57,18 @@ fn main() {
                     // If we have a DMX Packet
                     ArtCommand::Output(output) => {
                         //println!("Received DMX Packet with {:?} bytes", output.port_address);
+
+                        let address = &output.port_address;
+
+                        let output_bytes = output.to_bytes().expect("Parsing failed");
+
                         for node in &mut nodes {
-                            if node.port_address == &output.port_address {
+                            if &node.port_address == address {
                                 //println!("Sending DMX Packet to {}", node.ip);
-                                let bytes = output.write_to_buffer().expect("Parsing failed");
-                                socket.send_to(&bytes, &node.ip).expect("Sending failed");
+                                let command = ArtCommand::Output(Output::from(&output_bytes).expect("Parsing failed"));
+                                let bytes = command.write_to_buffer().expect("Parsing failed");
+                                let src_addr = node.ip.to_socket_addrs().expect("Test").next().expect("Test");
+                                socket.send_to(&bytes, &src_addr).expect("Sending failed");
                             }
                         }
                     },
@@ -97,9 +104,12 @@ fn main() {
 
                         // if the node is not in the list, add it
                         if !found {
+
+                            let port_address: u16 = ((poll_reply.port_address[0] as u16) << 8) | (poll_reply.port_address[1] as u16);
+
                             nodes.push(Node {
                                 ip: src.ip().to_string(),
-                                port_address: PortAddress::from(poll_reply.port_address),
+                                port_address: PortAddress::try_from(port_address).expect("Parsing failed"),
                                 last_reply: Instant::now()
                             });
                         }
