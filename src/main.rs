@@ -2,8 +2,6 @@ use artnet_protocol::*;
 use std::net::{UdpSocket, ToSocketAddrs};
 use std::time::Instant;
 
-
-
 fn main() {
 
     // Open an udp port to listen to artnet
@@ -14,13 +12,22 @@ fn main() {
     // define the brodcast adress for polling
     let brodcast = "255.255.255.255:6454".to_socket_addrs().expect("Test").next().expect("Test");
 
+
     #[derive(Debug)]
     struct Node {
-        ip: String,
-        port_address: [PortAddress; 4],
+        ip: Ipv4Addr,
+        port: u16,
         last_reply : Instant
     }
     let mut nodes: Vec<Node> = Vec::new();
+
+    #[derive(Debug)]
+    struct PortAddressSubscribers {
+        port_address: PortAddress,
+        subscribers: Vec<Node>
+    }
+
+    let mut subscriptions: Vec<PortAddressSubscribers> = Vec::new();
 
     // start the main loop
     let mut  start = Instant::now();
@@ -102,46 +109,10 @@ fn main() {
                     },
 
                     ArtCommand::PollReply(poll_reply) => {
-                        //println!("Recieved Poll Reply Packet IP: {}, PortAddress: {:?}", src, poll_reply.port_address);
+                        let port_address = &poll_reply.port_address;
 
-                        // iterate through the list of nodes
-                        let mut found = false;
-                        for node in &mut nodes {
-                            if node.ip == src.ip().to_string() {
-                                // update the last reply
-                                node.last_reply = Instant::now();
-                                // set the found flag
-                                found = true;
-                               break;
-                            }
-                        }
 
-                        // if the node is not in the list, add it
-                        if !found {
 
-                            println!("found a device with universes: {:?}", poll_reply.swin);
-
-                            //let port_address: u16 = ((poll_reply.port_address[0] as u16) << 8) | (poll_reply.port_address[1] as u16);
-
-                            let mut port_addresses: [PortAddress; 4] = [0.into(),0.into(),0.into(),0.into()];
-
-                            for i in 1..4 {
-                                let swin_byte = poll_reply.swin[i];
-
-                                let universe = (swin_byte & 0x0F) as u16;
-                                let port_address =  ((poll_reply.port_address[0] as u16 & 0x7F) << 8) | 
-                                                    ((poll_reply.port_address[1]  as u16 & 0x0F) << 4) | 
-                                                    universe;
-
-                                port_addresses[i] = PortAddress::try_from(port_address).expect("Parsing failed")
-                            }
-
-                            nodes.push(Node {
-                                ip: src.ip().to_string(),
-                                port_address: port_addresses,
-                                last_reply: Instant::now()
-                            });
-                        }
                     },
                     // default
                     _ => println!("Received Packet of type: {:?} from {}", command, src)
