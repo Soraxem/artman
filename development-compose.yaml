@@ -5,5 +5,4 @@ services:
       dockerfile: development.dockerfile
     volumes:
       - ./:/app
-    ports:
-      - "6454:6454/udp"
+    network_mode: host
