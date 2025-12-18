@@ -17,7 +17,7 @@ fn main() {
     #[derive(Debug)]
     struct Node {
         ip: String,
-        port_address: PortAddress,
+        port_address: [PortAddress; 4],
         last_reply : Instant
     }
     let mut nodes: Vec<Node> = Vec::new();
@@ -56,19 +56,32 @@ fn main() {
 
                     // If we have a DMX Packet
                     ArtCommand::Output(output) => {
-                        //println!("Received DMX Packet with {:?} bytes", output.port_address);
+                        println!("Received DMX Packet with {:?} bytes", output.port_address);
+
 
                         let address = &output.port_address;
 
-                        let output_bytes = output.to_bytes().expect("Parsing failed");
+                        if *address > PortAddress::from(0) {
+                            let output_bytes = output.to_bytes().expect("Parsing failed");
 
-                        for node in &mut nodes {
-                            if &node.port_address == address {
-                                //println!("Sending DMX Packet to {}", node.ip);
-                                let command = ArtCommand::Output(Output::from(&output_bytes).expect("Parsing failed"));
-                                let bytes = command.write_to_buffer().expect("Parsing failed");
-                                let src_addr = node.ip.to_socket_addrs().expect("Test").next().expect("Test");
-                                socket.send_to(&bytes, &src_addr).expect("Sending failed");
+                            for node in &mut nodes {
+                                for port in &node.port_address {
+                                    if port == address {
+                                        let command = ArtCommand::Output(Output::from(&output_bytes).expect("Parsing failed"));
+                                        let bytes = command.write_to_buffer().expect("Parsing failed");
+                                        let src_addr = ( node.ip.clone() + ":6454" ).to_socket_addrs().expect("Test").next().expect("Test");
+                                        socket.send_to(&bytes, &src_addr).expect("Sending failed");
+                                    }
+                                }
+
+
+                                /*if &node.port_address == address {
+                                    //println!("Sending DMX Packet to {}", node.ip);
+                                    let command = ArtCommand::Output(Output::from(&output_bytes).expect("Parsing failed"));
+                                    let bytes = command.write_to_buffer().expect("Parsing failed");
+                                    let src_addr = ( node.ip.clone() + ":6454" ).to_socket_addrs().expect("Test").next().expect("Test");
+                                    socket.send_to(&bytes, &src_addr).expect("Sending failed");
+                                }*/
                             }
                         }
                     },
@@ -79,6 +92,7 @@ fn main() {
 
                         // define a reply for polling
                         let poll_reply = ArtCommand::PollReply (Box::new(PollReply {
+
                             ..PollReply::default()
                         }));
                
@@ -105,11 +119,26 @@ fn main() {
                         // if the node is not in the list, add it
                         if !found {
 
-                            let port_address: u16 = ((poll_reply.port_address[0] as u16) << 8) | (poll_reply.port_address[1] as u16);
+                            println!("found a device with universes: {:?}", poll_reply.swin);
+
+                            //let port_address: u16 = ((poll_reply.port_address[0] as u16) << 8) | (poll_reply.port_address[1] as u16);
+
+                            let mut port_addresses: [PortAddress; 4] = [0.into(),0.into(),0.into(),0.into()];
+
+                            for i in 1..4 {
+                                let swin_byte = poll_reply.swin[i];
+
+                                let universe = (swin_byte & 0x0F) as u16;
+                                let port_address =  ((poll_reply.port_address[0] as u16 & 0x7F) << 8) | 
+                                                    ((poll_reply.port_address[1]  as u16 & 0x0F) << 4) | 
+                                                    universe;
+
+                                port_addresses[i] = PortAddress::try_from(port_address).expect("Parsing failed")
+                            }
 
                             nodes.push(Node {
                                 ip: src.ip().to_string(),
-                                port_address: PortAddress::try_from(port_address).expect("Parsing failed"),
+                                port_address: port_addresses,
                                 last_reply: Instant::now()
                             });
                         }
