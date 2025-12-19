@@ -2,8 +2,8 @@ use artnet_protocol::*;
 use std::net::{UdpSocket, ToSocketAddrs, SocketAddr};
 use std::time::{ Instant, Duration };
 
-use std::net::Ipv4Addr;
 use std::collections::HashMap;
+
 
 fn main() {
 
@@ -15,21 +15,11 @@ fn main() {
     // define the brodcast adress for polling
     let brodcast = "255.255.255.255:6454".to_socket_addrs().expect("Test").next().expect("Test");
 
-    // Information about nodes needed for sending artnet packets
-    #[derive(Debug)]
-    struct Node {
-        ip: Ipv4Addr,
-        port: u16,
-        last_reply : Instant
-    }
-
     // Nodes Per port address
-    //let mut subscriptions: HashMap<PortAddress, Vec<Node>> = HashMap::new();
     let mut subscriptions: HashMap<PortAddress, HashMap<SocketAddr, Instant>> = HashMap::new();
 
-
     // start the main loop
-    let mut  start = Instant::now();
+    let mut start = Instant::now();
     loop {
 
         // send a poll packet every 3 seconds
@@ -41,8 +31,7 @@ fn main() {
             let buff = ArtCommand::Poll(Poll::default()).write_to_buffer().expect("Polling failed");
             socket.send_to(&buff, &brodcast).expect("Polling failed");
 
-            println!("Sent Poll Packet");
-
+            // Clean unresponsive Nodes
             let now = Instant::now();
 
             // Iterate through all subscriptions
@@ -52,11 +41,8 @@ fn main() {
                 !addr_map.is_empty()
             });
 
-            println!("Subscriptions: {:?}", subscriptions.entry(PortAddress::from(1)));
+            //println!("Subscriptions: {:?}", subscriptions.entry(PortAddress::from(1)));
         }
-
-        // remove nodes that have not responded
-        //nodes.retain(|node| node.last_reply.elapsed().as_secs() < 20);
 
         // Create a Buffer for storing the current Packet
         let mut buffer = [0u8; 1024];
@@ -76,7 +62,7 @@ fn main() {
 
                     // If we have a DMX Packet
                     ArtCommand::Output(output) => {
-                        println!("Received DMX Packet with {:?} bytes", output.port_address);
+                        //println!("Received DMX Packet with {:?} bytes", output.port_address);
 
 
                         let address = &output.port_address;
@@ -86,7 +72,8 @@ fn main() {
                         if *address > PortAddress::from(0) {
                             let output_bytes = output.to_bytes().expect("Parsing failed");
 
-                            for (socket_addr, instant) in subscriptions.get(&address).unwrap_or(&HashMap::new()) {
+                            // iterate nodes in PortAddress
+                            for (socket_addr, _instant) in subscriptions.get(&address).unwrap_or(&HashMap::new()) {
 
                                 let command = ArtCommand::Output(Output::from(&output_bytes).expect("Parsing failed"));
                                 let bytes = command.write_to_buffer().expect("Parsing failed");
@@ -94,35 +81,13 @@ fn main() {
 
                                 socket.send_to(&bytes, &socket_addr).expect("sending Failed!");
 
-                                println!("SentDMX!!");
+                                //println!("SentDMX!!");
                             }
-
-                            /*
-                            for node in &mut nodes {
-                                for port in &node.port_address {
-                                    if port == address {
-                                        let command = ArtCommand::Output(Output::from(&output_bytes).expect("Parsing failed"));
-                                        let bytes = command.write_to_buffer().expect("Parsing failed");
-                                        let src_addr = ( node.ip.clone() + ":6454" ).to_socket_addrs().expect("Test").next().expect("Test");
-                                        socket.send_to(&bytes, &src_addr).expect("Sending failed");
-                                    }
-                                }
-                            
-
-                                /*if &node.port_address == address {
-                                    //println!("Sending DMX Packet to {}", node.ip);
-                                    let command = ArtCommand::Output(Output::from(&output_bytes).expect("Parsing failed"));
-                                    let bytes = command.write_to_buffer().expect("Parsing failed");
-                                    let src_addr = ( node.ip.clone() + ":6454" ).to_socket_addrs().expect("Test").next().expect("Test");
-                                    socket.send_to(&bytes, &src_addr).expect("Sending failed");
-                                }*/
-                            }*/
                         }
                     },
 
                     // Wen revieving a Poll Packet
-                    ArtCommand::Poll(poll) => {
-                        //println!("Recieved Poll Packet from {}", src);
+                    ArtCommand::Poll(_poll) => {
 
                         // define a reply for polling
                         let poll_reply = ArtCommand::PollReply (Box::new(PollReply {
@@ -168,7 +133,7 @@ fn main() {
                         }
 
                     },
-                    // default
+                    // On other packet types
                     _ => println!("Received Packet of type: {:?} from {}", command, src)
                 }
             }
