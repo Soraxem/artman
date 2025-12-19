@@ -1,0 +1,12 @@
+services:
+  artman:
+    build:
+      context: .
+      dockerfile: dockerfile
+    volumes:
+      - ./:/app
+    network_mode: host
+  qlc-plus:
+    image: averyout48/qlc-plus-docker
+    ports:
+      - "80:9999"
