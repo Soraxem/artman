@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 artnet_protocol = "0.4.4"
+artnet-parser = { git = "https://github.com/Soraxem/artnet-parser.git" }

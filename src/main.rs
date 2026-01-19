@@ -1,5 +1,10 @@
 use artnet_protocol::*;
-use std::net::{UdpSocket, ToSocketAddrs, SocketAddr};
+
+use artnet_parser::ArtNetPacket;
+use artnet_parser::ArtNetPacket::ArtPoll;
+use artnet_parser::get_op_code;
+
+use std::net::{ UdpSocket, ToSocketAddrs, SocketAddr };
 use std::time::{ Instant, Duration };
 
 use std::collections::HashMap;
@@ -56,6 +61,23 @@ fn main() {
                 // Parse the Packet
                 // ToDo: no panic if parsing fails
                 let command = ArtCommand::from_buffer(&buffer[..len]).expect("Malformed Packet");
+
+
+                match ArtNetPacket::parse(&buffer[..len]) {
+                    Ok(packet) => {
+                        println!("Parsed Packet");
+                        match packet {
+                            ArtPoll(poll) => {
+                                
+                            },
+                            _ => println!("Unknown Packet Type"),
+                        }
+                    },
+                    Err(_) => {
+                        println!("Malformed Packet");
+                    }
+                }
+
 
                 // Handle the command types
                 match command {
