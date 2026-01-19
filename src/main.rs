@@ -1,13 +1,30 @@
 use artnet_protocol::*;
 
+use artnet_parser::ArtPollFlags;
+use artnet_parser::art_poll::ArtPoll;
+use artnet_parser::art_poll_reply::ArtPollReply;
 use artnet_parser::ArtNetPacket;
-use artnet_parser::ArtNetPacket::ArtPoll;
 use artnet_parser::get_op_code;
+use artnet_parser::is_artnet;
 
 use std::net::{ UdpSocket, ToSocketAddrs, SocketAddr };
 use std::time::{ Instant, Duration };
 
 use std::collections::HashMap;
+
+
+// function to pad fixed binary strings
+const fn to_fixed<const N: usize>(input: &[u8]) -> [u8; N] {
+    let mut buffer = [0u8; N];
+    let mut i = 0;
+    while i < input.len() && i < N {
+        buffer[i] = input[i];
+        i += 1;
+    }
+    buffer
+}
+
+
 
 
 fn main() {
@@ -33,7 +50,10 @@ fn main() {
             start = Instant::now();
 
             // Send a Poll Packet
-            let buff = ArtCommand::Poll(Poll::default()).write_to_buffer().expect("Polling failed");
+            //let buff = ArtCommand::Poll(Poll::default()).write_to_buffer().expect("Polling failed");
+            //socket.send_to(&buff, &brodcast).expect("Polling failed");
+
+            let buff = ArtPoll::default().serialize();
             socket.send_to(&buff, &brodcast).expect("Polling failed");
 
             // Clean unresponsive Nodes
@@ -58,27 +78,48 @@ fn main() {
             // Packet is avalliable
             Ok((len, src)) => {
 
-                // Parse the Packet
-                // ToDo: no panic if parsing fails
-                let command = ArtCommand::from_buffer(&buffer[..len]).expect("Malformed Packet");
-
-
+                // Parse the recieved udp Packet
                 match ArtNetPacket::parse(&buffer[..len]) {
+                    // The packet was parsed
                     Ok(packet) => {
-                        println!("Parsed Packet");
+                        // match the packet format
                         match packet {
-                            ArtPoll(poll) => {
-                                
+                            ArtNetPacket::ArtPoll(poll) => {
+                                println!("ArtPoll from: {} version: {}", src, poll.protocol_version);
+
+
+                                //name[..bytes.len()].copy_from_slice(bytes);
+
+                                let reply = ArtPollReply {
+                                    ip_address: match socket.local_addr().unwrap().ip() {
+                                        std::net::IpAddr::V4(ipv4) => ipv4,
+                                        std::net::IpAddr::V6(_) => panic!("IPv6 not supported"),
+                                    },
+                                    port_name: to_fixed(b"ArtMan"),
+                                    long_name: to_fixed(b"development version of Artman"),
+                                    ..ArtPollReply::default()
+                                };
+
+                                let bytes = reply.serialize();
+                                socket.send_to(&bytes, &src).expect("Sending reply failed");
+
+                            },
+                            ArtNetPacket::ArtPollReply(poll_reply) => {
+                                println!("ArtPollReply from: {} version: {}", src, poll_reply.version_info);
+                            },
+                            ArtNetPacket::ArtDmx(dmx) => {
+                                println!("ArtDmx for PortAddress: {} first Channel: {}", dmx.port_address.0, dmx.data[0]);
                             },
                             _ => println!("Unknown Packet Type"),
                         }
                     },
-                    Err(_) => {
-                        println!("Malformed Packet");
+                    // The packet could not be parsed
+                    Err(error) => {
+                        println!("Error: {}", error);
                     }
                 }
 
-
+                /*
                 // Handle the command types
                 match command {
 
@@ -108,7 +149,7 @@ fn main() {
                         }
                     },
 
-                    // Wen revieving a Poll Packet
+                    // When receiving a Poll
                     ArtCommand::Poll(_poll) => {
 
                         // define a reply for polling
@@ -157,7 +198,7 @@ fn main() {
                     },
                     // On other packet types
                     _ => println!("Received Packet of type: {:?} from {}", command, src)
-                }
+                } */
             }
 
             // No Packets available, continue
