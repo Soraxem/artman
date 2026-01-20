@@ -1,9 +1,13 @@
-use artnet_protocol::*;
+/// This is the ArtMan ArtNet manager
+/// 
+/// This software is for managing Artnet networks and Protocol upgrading to the Artnet 4 Spec of communication.
 
 use artnet_parser::ArtPollFlags;
 use artnet_parser::art_poll::ArtPoll;
 use artnet_parser::art_poll_reply::ArtPollReply;
+use artnet_parser::art_dmx::ArtDmx;
 use artnet_parser::ArtNetPacket;
+use artnet_parser::PortAddress;
 use artnet_parser::get_op_code;
 use artnet_parser::is_artnet;
 
@@ -29,6 +33,14 @@ const fn to_fixed<const N: usize>(input: &[u8]) -> [u8; N] {
 
 fn main() {
 
+    // Get the Local IP
+    let local_ip = {
+        let socket = UdpSocket::bind("0.0.0.0:0").expect("Couldn't bind dummy");
+        socket.connect("8.8.8.8:80").expect("Couldn't connect to dummy");
+        socket.local_addr().expect("Couldn't get local addr").ip()
+    };
+    println!("Detected Local IP: {}", local_ip);
+
     // Open an udp port to listen to artnet
     let socket = UdpSocket::bind("0.0.0.0:6454").expect("Could not bind to port 6454");
     socket.set_broadcast(true).expect("Could not set broadcast");
@@ -36,6 +48,7 @@ fn main() {
 
     // define the brodcast adress for polling
     let brodcast = "255.255.255.255:6454".to_socket_addrs().expect("Test").next().expect("Test");
+
 
     // Nodes Per port address
     let mut subscriptions: HashMap<PortAddress, HashMap<SocketAddr, Instant>> = HashMap::new();
@@ -50,9 +63,6 @@ fn main() {
             start = Instant::now();
 
             // Send a Poll Packet
-            //let buff = ArtCommand::Poll(Poll::default()).write_to_buffer().expect("Polling failed");
-            //socket.send_to(&buff, &brodcast).expect("Polling failed");
-
             let buff = ArtPoll::default().serialize();
             socket.send_to(&buff, &brodcast).expect("Polling failed");
 
@@ -61,12 +71,13 @@ fn main() {
 
             // Iterate through all subscriptions
             subscriptions.retain(|_, addr_map| {
-                // Retain adresses of nodes that were alive the last 20s
+                // only retain adresses of nodes that were alive the last 20s
                 addr_map.retain(|_, instant| now.duration_since(*instant) <= Duration::from_secs(20));
                 !addr_map.is_empty()
             });
 
-            //println!("Subscriptions: {:?}", subscriptions.entry(PortAddress::from(1)));
+            // Show a list of subscriptions to universe 1
+            println!("Subscriptions: {:?}", subscriptions.entry( PortAddress::unsafe_from_u16(1) ));
         }
 
         // Create a Buffer for storing the current Packet
@@ -84,121 +95,75 @@ fn main() {
                     Ok(packet) => {
                         // match the packet format
                         match packet {
+
+                            // Recieved a polling request
                             ArtNetPacket::ArtPoll(poll) => {
-                                println!("ArtPoll from: {} version: {}", src, poll.protocol_version);
 
-
-                                //name[..bytes.len()].copy_from_slice(bytes);
-
+                                // setup a reply
                                 let reply = ArtPollReply {
-                                    ip_address: match socket.local_addr().unwrap().ip() {
+                                    ip_address: match local_ip {
                                         std::net::IpAddr::V4(ipv4) => ipv4,
                                         std::net::IpAddr::V6(_) => panic!("IPv6 not supported"),
                                     },
+
                                     port_name: to_fixed(b"ArtMan"),
                                     long_name: to_fixed(b"development version of Artman"),
+                                    version_info: 14,
                                     ..ArtPollReply::default()
                                 };
 
+                                // Send the Reply
                                 let bytes = reply.serialize();
                                 socket.send_to(&bytes, &src).expect("Sending reply failed");
 
                             },
+
+                            // Recieved a polling replay, store it to the subscription list
                             ArtNetPacket::ArtPollReply(poll_reply) => {
-                                println!("ArtPollReply from: {} version: {}", src, poll_reply.version_info);
+                                
+                                // Take the Current time to remember when the node was last seen
+                                let instant = Instant::now();
+
+                                // iterate over all inputs and outputs, and resgistering subscriptions for them
+                                for port_address in poll_reply.inputs.iter() {
+                                    // Get or create a new HashMap for the given PortAddress
+                                    let addr_map = subscriptions.entry(*port_address).or_insert_with(HashMap::new);
+                                    addr_map.insert(src, instant);
+                                }
+                                for port_address in poll_reply.outputs.iter() {
+                                    // Get or create a new HashMap for the given PortAddress
+                                    let addr_map = subscriptions.entry(*port_address).or_insert_with(HashMap::new);
+                                    addr_map.insert(src, instant);
+                                }
+
                             },
+
+                            // Recieved a DMX Packet
                             ArtNetPacket::ArtDmx(dmx) => {
-                                println!("ArtDmx for PortAddress: {} first Channel: {}", dmx.port_address.0, dmx.data[0]);
+                                //println!("ArtDmx for PortAddress: {} first Channel: {} sequence: {}", dmx.port_address.0, dmx.data[0], dmx.sequence);
+
+                                // Only forward dmx that is not universe 0
+                                // Universe 0 is the default setting, and therefore congests the network, if every unconfigured device unkowingly subscribes to universe 0
+                                if dmx.port_address.as_u16() > 0 {
+
+                                    // iterate nodes that subscribed to this universe
+                                    for (socket_addr, _instant) in subscriptions.get(&dmx.port_address).unwrap_or(&HashMap::new()) {
+
+                                        // forward the dmx data
+                                        socket.send_to(&dmx.serialize(), &socket_addr).expect("sending Failed!");
+                                    }
+                                }
                             },
                             _ => println!("Unknown Packet Type"),
                         }
                     },
+
                     // The packet could not be parsed
                     Err(error) => {
                         println!("Error: {}", error);
                     }
                 }
 
-                /*
-                // Handle the command types
-                match command {
-
-                    // If we have a DMX Packet
-                    ArtCommand::Output(output) => {
-                        //println!("Received DMX Packet with {:?} bytes", output.port_address);
-
-
-                        let address = &output.port_address;
-
-                        // Do not relay Packets from PortAddress 0
-                        // -> unconfigured devices automatically subscribe to it. So it generates network congestion.
-                        if *address > PortAddress::from(0) {
-                            let output_bytes = output.to_bytes().expect("Parsing failed");
-
-                            // iterate nodes in PortAddress
-                            for (socket_addr, _instant) in subscriptions.get(&address).unwrap_or(&HashMap::new()) {
-
-                                let command = ArtCommand::Output(Output::from(&output_bytes).expect("Parsing failed"));
-                                let bytes = command.write_to_buffer().expect("Parsing failed");
-
-
-                                socket.send_to(&bytes, &socket_addr).expect("sending Failed!");
-
-                                //println!("SentDMX!!");
-                            }
-                        }
-                    },
-
-                    // When receiving a Poll
-                    ArtCommand::Poll(_poll) => {
-
-                        // define a reply for polling
-                        let poll_reply = ArtCommand::PollReply (Box::new(PollReply {
-
-                            ..PollReply::default()
-                        }));
-               
-                        // send the reply
-                        let bytes = poll_reply.write_to_buffer().expect("Parsing reply failed");
-                        socket.send_to(&bytes, &src).expect("Sending reply failed");
-                    },
-
-                    ArtCommand::PollReply(poll_reply) => {
-
-                        // Shift the NetSwitch and SubSwich fields to the right position of PortAddress
-                        let mut port_net: u16 = u16::from(poll_reply.port_address[0]) << 8;
-                        port_net = port_net | u16::from(poll_reply.port_address[1]) << 4;
-
-                        let instant = Instant::now();
-
-                        // Check the Swin ports
-                        for i in 0..4 {
-                            // Complete the PortAddress
-                            let port_address: PortAddress = (port_net | &poll_reply.swin[i].into()).try_into().unwrap();
-
-                            // Get or create a new HashMap for the given PortAddress
-                            let addr_map = subscriptions.entry(port_address).or_insert_with(HashMap::new);
-                            addr_map.insert(src, instant);
-
-                            //println!("found Port Address: {:?}", port_address);
-                        }
-
-                        // Check the Swout ports
-                        for i in 0..4 {
-                            // Complete the PortAddress
-                            let port_address: PortAddress = (port_net | &poll_reply.swout[i].into()).try_into().unwrap();
-
-                            // Get or create a new HashMap for the given PortAddress
-                            let addr_map = subscriptions.entry(port_address).or_insert_with(HashMap::new);
-                            addr_map.insert(src, instant);
-
-                            //println!("found Port Address: {:?}", port_address);
-                        }
-
-                    },
-                    // On other packet types
-                    _ => println!("Received Packet of type: {:?} from {}", command, src)
-                } */
             }
 
             // No Packets available, continue
